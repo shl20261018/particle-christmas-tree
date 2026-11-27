@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Magic Particle Tree</title>
+<style>
+  :root {
+    --line: rgba(255,255,255,0.08);
+    --panel-bg: rgba(10,16,28,0.55);
+    --txt: rgba(220,230,245,0.85);
+    --txt-dim: rgba(200,215,235,0.45);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%;
+    background: #05080f;
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+  }
+  canvas { position: fixed; inset: 0; display: block; }
+
+  /* ---------- 底部控制面板（磨砂玻璃） ---------- */
+  #panel {
+    position: fixed;
+    left: 10px; right: 58px; bottom: 10px;
+    padding: 12px 14px 14px;
+    background: var(--panel-bg);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    backdrop-filter: blur(16px) saturate(1.2);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    color: var(--txt);
+    z-index: 10;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    transition: transform .45s cubic-bezier(.22,.9,.36,1), opacity .45s ease;
+  }
+  /* 手机端收起状态：滑出屏幕 */
+  #panel.collapsed { transform: translateY(calc(100% + 26px)); opacity: 0; pointer-events: none; }
+
+  /* 收起/展开按钮（手机竖屏 + 横屏均显示，触摸友好） */
+  #panelBtn {
+    position: fixed; right: 14px; bottom: 16px;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: rgba(10,16,28,0.62);
+    -webkit-backdrop-filter: blur(12px) saturate(1.2);
+    backdrop-filter: blur(12px) saturate(1.2);
+    border: 1px solid var(--line);
+    color: var(--txt);
+    font-size: 18px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 11; cursor: pointer;
+    touch-action: manipulation;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.45);
+    transition: transform .3s ease, opacity .3s ease;
+  }
+  #panelBtn:active { transform: scale(0.9); }
+  .sec-label {
+    font-size: 10px; letter-spacing: 2px;
+    color: var(--txt-dim);
+    margin: 8px 0 6px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  /* 预设色板 */
+  .swatch {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.12);
+    cursor: pointer; flex: none;
+    transition: transform .25s ease-in-out, box-shadow .25s ease-in-out;
+  }
+  .swatch.active {
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.55);
+    transform: scale(1.08);
+  }
+  /* 拾色器 */
+  .picker-wrap {
+    width: 34px; height: 34px; border-radius: 50%;
+    overflow: hidden; flex: none; position: relative;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: conic-gradient(#46b98c,#5f8fe0,#9b7fd4,#6fc0e8,#c47fa8,#62c4b0,#46b98c);
+  }
+  .picker-wrap::after {
+    content: attr(data-label);
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%,-50%);
+    font-size: 10px; font-weight: 600;
+    color: #fff; text-shadow: 0 0 3px rgba(0,0,0,.8);
+    pointer-events: none;
+  }
+  .picker-wrap input[type=color] {
+    position: absolute; inset: -6px;
+    width: calc(100% + 12px); height: calc(100% + 12px);
+    opacity: 0; cursor: pointer;
+  }
+
+  /* 开关 */
+  .toggle { display: flex; align-items: center; gap: 7px; cursor: pointer; flex: none; }
+  .toggle input { display: none; }
+  .toggle .track {
+    width: 44px; height: 24px; border-radius: 12px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid var(--line);
+    position: relative;
+    transition: background .3s ease-in-out;
+  }
+  .toggle .track::after {
+    content: "";
+    position: absolute; top: 2px; left: 3px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(255,255,255,0.85);
+    transition: transform .3s ease-in-out;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  }
+  .toggle input:checked + .track { background: var(--accent, #46b98c); }
+  .toggle input:checked + .track::after { transform: translateX(19px); }
+  .toggle span { font-size: 12px; color: var(--txt); }
+
+  /* 滑块 */
+  .slider { display: flex; align-items: center; gap: 8px; flex: 1 1 150px; min-width: 145px; }
+  .slider label { font-size: 12px; flex: none; }
+  .slider input[type=range] {
+    flex: 1; height: 28px; margin: 0;
+    accent-color: var(--accent, #46b98c);
+    background: transparent;
+  }
+
+  /* ---------- 横屏：面板移至右侧，同样可收起 ---------- */
+  @media (orientation: landscape) {
+    #panel {
+      left: auto; right: 12px; bottom: auto; top: 50%;
+      transform: translateY(-50%);
+      width: 250px;
+      max-height: 88vh;
+    }
+    #panel.collapsed { transform: translate(calc(100% + 26px), -50%); opacity: 0; pointer-events: none; }
+    .slider { flex-basis: 100%; }
+  }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="panel">
+  <div class="sec-label">配色</div>
+  <div class="row" id="presetRow">
+    <div class="picker-wrap" data-label="树"><input type="color" id="treePicker" value="#46b98c" aria-label="树主发光色"></div>
+    <div class="picker-wrap" data-label="灯"><input type="color" id="starPicker" value="#ffd88a" aria-label="灯珠光尘色"></div>
+  </div>
+  <div class="sec-label">效果</div>
+  <div class="row">
+    <label class="toggle"><input type="checkbox" id="tgBreath" checked><i class="track"></i><span>呼吸光</span></label>
+    <label class="toggle"><input type="checkbox" id="tgFlow" checked><i class="track"></i><span>流光灯效</span></label>
+    <label class="toggle"><input type="checkbox" id="tgParticle" checked><i class="track"></i><span>光尘飘雪</span></label>
+  </div>
+  <div class="sec-label">调节</div>
+  <div class="row">
+    <div class="slider"><label>发光强度</label><input type="range" id="slGlow" min="0.2" max="1.2" step="0.01" value="0.7"></div>
+    <div class="slider"><label>动画流速</label><input type="range" id="slSpeed" min="0.2" max="2" step="0.01" value="1"></div>
+    <div class="slider"><label>粒子密度</label><input type="range" id="slDensity" min="0.2" max="1" step="0.01" value="1"></div>
+    <div class="slider"><label>缩放</label><input type="range" id="slZoom" min="0.5" max="2.5" step="0.05" value="1"></div>
+    <div class="slider"><label>旋转速度</label><input type="range" id="slRotate" min="0" max="2" step="0.05" value="0.6"></div>
+  </div>
+</div>
+<button id="panelBtn" aria-label="收起/展开控制面板">▾</button>
+
+<script>
+'use strict';
+/* ================= 可调参数（顶部集中，便于微调） ================= */
+const CONFIG = {
+  treeColor:   '#46b98c',   // 树主发光色
+  starColor:   '#ffd88a',   // 灯珠 / 光尘色
+  glow:        0.7,         // 发光强度 0.2~1.2
+  speed:       1,           // 动画流速 0.2~2
+  density:     1,           // 粒子密度 0.2~1（1 = 满配约一万颗）
+  breathing:   true,        // 呼吸光
+  flow:        true,        // 流光灯效（光波沿树扫动 + 灯珠流动）
+  particles:   true,        // 光尘 + 飘雪
+  rotate:      0.6,         // 树体自转速度 0~2（0 = 停）
+};
+
+// 粒子规模（默认密度下总计约两万颗；小屏按面积自动下调）
+const SCALE = {
+  inner: 17000,    // 枝叶内部粒子
+  edge:  2600,     // 枝叶轮廓粒子（"围成"树形的关键）
+  trunk: 300,      // 树干粒子
+  motes: 90,       // 环绕光尘
+  snows: 55,       // 落雪
+};
+
+// 6 套魔幻低饱和预设：[名称, 树主色, 灯珠光尘色]
+const PRESETS = [
+  ['翡翠星辉', '#46b98c', '#ffd88a'],
+  ['星夜蓝金', '#5f8fe0', '#ffd88a'],
+  ['秘境紫晶', '#9b7fd4', '#e8c98f'],
+  ['冰晶幻蓝', '#6fc0e8', '#d8f0ff'],
+  ['暗夜玫瑰', '#c47fa8', '#f0c8a8'],
+  ['极光秘银', '#62c4b0', '#d8f0e8'],
+];
+
+/* ================= 基础环境 ================= */
+const cvs = document.getElementById('scene');
+const ctx = cvs.getContext('2d');
+let W = 0, H = 0, DPR = 1, t = 0;
+let tree = null;
+let inners = [], edges = [], trunks = [];   // 树粒子三组
+let motes = [], snows = [];
+let treeSprite = null;   // 树粒子柔和辉光贴图（随树色重建）
+let beadSprite = null;   // 灯珠亮芯贴图（随灯色重建）
+let whiteSprite = null;  // 白色微光（星野）
+let ign = [];                                 // 指尖点燃点（手指到哪，粒子亮到哪）
+let waves = [];                               // 轻点后的点燃扩散波（波前经过的粒子点亮）
+let zoom = 1, targetZoom = 1;                 // 画面缩放（捏合 / 滚轮 / 滑块）
+const pointers = new Map();                  // 活跃触点（捏合/旋转判定）
+let pinch = null;                            // 双指基准（距离→缩放）
+let lastTap = { t: 0, x: 0, y: 0 };          // 双击复位检测
+let flowU = 0;
+let bloomT = 0, bloom = 0;                    // 开场汇聚后的"绽放"脉冲（一次）
+
+/* ================= 3D 场景：俯角透视 + 绕轴自转 ================= */
+let ry = 0, rVel = 0;                        // 自转角 / 手动旋转惯性
+const TILT = 0.36;                           // 相机俯角
+const cosT = Math.cos(TILT), sinT = Math.sin(TILT);
+let F = 900, gY = 0, cXs = 0;                // 焦距 / 地面锚点 / 画面中心（buildTree 赋值）
+let cosR = 1, sinR = 0;                      // 每帧自转系数
+
+/* ================= 工具 ================= */
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+// 亮芯贴图（灯珠 / 星）：白心 + 彩晕
+function makeBeadSprite(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d');
+  const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,0.95)');
+  gr.addColorStop(0.18, `rgba(${r},${g},${b},0.9)`);
+  gr.addColorStop(0.45, `rgba(${r},${g},${b},0.4)`);
+  gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  x.fillStyle = gr;
+  x.fillRect(0, 0, 64, 64);
+  return c;
+}
+// 亮芯贴图（树粒子）：实心亮芯 + 快速衰减 → 清晰锐利不糊
+function makeTreeSprite(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d');
+  const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, `rgba(${r},${g},${b},0.95)`);
+  gr.addColorStop(0.28, `rgba(${r},${g},${b},0.80)`);
+  gr.addColorStop(0.50, `rgba(${r},${g},${b},0.25)`);
+  gr.addColorStop(0.70, `rgba(${r},${g},${b},0)`);
+  x.fillStyle = gr;
+  x.fillRect(0, 0, 64, 64);
+  return c;
+}
+
+/* ================= 树形构建：3D 锥形枝冠 + 海量粒子 ================= */
+// 生成一颗树粒子（3D 世界锚点；开场从全屏随机位置飞聚到投影点）
+function makeTreeP(ax, ay, az, s, a) {
+  return {
+    x: Math.random() * W, y: Math.random() * H,   // 屏幕位置（开场散布 → 汇聚）
+    ax, ay, az,                                    // 3D 锚点（世界坐标：x 右 / y 向上 / z 朝屏幕外）
+    k: 0.6 + Math.random() * 1.4,                  // 汇聚/跟随速率
+    ph: Math.random() * Math.PI * 2,
+    ph2: Math.random() * Math.PI * 2,
+    fs: 0.5 + Math.random() * 1.1,
+    amp: 0.8 + Math.random() * 1.6,               // 世界坐标微漂移
+    s, a,
+    heat: 0,                                        // 点燃热度（指尖交互，余晖冷却）
+    my: 0,                                         // 归一化全树高（0 地面 1 树顶）
+  };
+}
+
+function buildTree() {
+  // 小屏（手机）按面积适度下调粒子量，保证流畅
+  const areaK = Math.min(1, Math.max(0.55, Math.sqrt(W * H / (1280 * 800))));
+  // 远景视角：树体缩小居中，四周留出深空纵深
+  const panelSpace = W > H ? 0 : Math.min(200, H * 0.24);
+  const usableH = H - panelSpace;
+  const cx = W / 2;
+  const treeH = Math.min(usableH * 0.62, W * 0.66);   // 近景：树体占屏 ~62%，气势拉满
+  const topY = (usableH - treeH) / 2;
+  const baseY = topY + treeH;
+  const maxW = Math.min(W * 0.30, treeH * 0.50);   // 冠幅加宽 → 宽屏下撑得起气势
+  const SEG = 6;
+
+  /* --- 3D 场景参数：世界原点在地面中心，Y 轴向上，透视投影补偿投影缩短 --- */
+  const H3 = treeH * 1.25;                     // 世界树高（抵消俯角透视的视觉缩短）
+  F = Math.max(700, treeH * 2.6);             // 焦距
+  gY = baseY + treeH * 0.075;                  // 地面锚点（原 pedY 位置）
+  cXs = cx;
+  const TRUNK_TOP = 0.16;                      // 树冠底部（占全高比例），下方露出树干
+  // 树冠归一化高度 u（0 冠底 1 冠顶）→ 世界高度
+  const ayOf = u => (TRUNK_TOP + (1 - TRUNK_TOP) * u) * H3;
+
+  // 6 层塔式杉冠：每层窄顶斜展到宽底 + 裙边下垂（层叠台阶剪影清晰）
+  const layers = [];
+  for (let i = 0; i < SEG; i++) {
+    const uTop = 0.86 * (SEG - i) / SEG;            // 层顶（归一化高度，u 越大越高）
+    const uBot = 0.86 * (SEG - i - 0.97) / SEG;     // 层底（层间留出台阶，不交叠）
+    const rBot = maxW * (0.14 + 0.86 * (i + 0.92) / SEG);  // 层底半径：i 越大层越低越宽
+    const rTop = rBot * 0.42;                       // 层顶收窄 → 台阶明显
+    const spokes = [];
+    const nS = 9;
+    const off = i * 0.37 + Math.random() * 0.6;
+    for (let j = 0; j < nS; j++) spokes.push(off + j / nS * Math.PI * 2);
+    layers.push({ uTop, uBot, rBot, rTop, spokes });
+  }
+  // 层内局部位置 v（0 顶 1 底）→ 该层锥面半径（上段陡、下段缓 → 每层像独立小锥）
+  const surfR = (L, v) => L.rTop + (L.rBot - L.rTop) * Math.pow(Math.min(v, 1), 1.15);
+
+  /* --- 枝叶粒子：50% 枝向表面 + 25% 裙边密排（层底下垂锯齿）+ 25% 体内填充 --- */
+  inners = [];
+  const nIn = Math.round(SCALE.inner * CONFIG.density * areaK);
+  for (let i = 0; i < nIn; i++) {
+    const L = layers[Math.floor(Math.random() * SEG)];
+    const v = Math.pow(Math.random(), 0.85);        // 略向层底聚集
+    let r, ang, u;
+    const w = Math.random();
+    if (w < 0.50) {
+      // 枝向表面：贴 spoke 排布（杉枝放射纹理），层底张角更宽
+      const sp = L.spokes[Math.floor(Math.random() * L.spokes.length)];
+      u = L.uTop + (L.uBot - L.uTop) * v;
+      ang = sp + (Math.random() - 0.5) * (0.16 + 0.34 * v);
+      r = surfR(L, v) * (0.80 + Math.random() * 0.24);
+    } else if (w < 0.75) {
+      // 裙边：层底边缘密排；v 越过 1 → 下垂出层底，形成层叠轮廓
+      const vv = 0.88 + Math.random() * 0.20;
+      u = L.uTop + (L.uBot - L.uTop) * vv;
+      ang = Math.random() * Math.PI * 2;
+      r = surfR(L, vv) * (0.96 + Math.random() * 0.14);
+    } else {
+      // 体内填充 → 饱满感
+      u = L.uTop + (L.uBot - L.uTop) * v;
+      ang = Math.random() * Math.PI * 2;
+      r = surfR(L, v) * Math.sqrt(Math.random()) * 0.82;
+    }
+    // 少量（8%）大光斑点缀，其余小核锐点 → 结构清晰不糊
+    const big = Math.random() < 0.08;
+    const ay = ayOf(u) + (Math.random() - 0.5) * 3;
+    const p = makeTreeP(Math.cos(ang) * r, ay, Math.sin(ang) * r,
+      big ? 2.2 + Math.random() * 2 : 0.8 + Math.random() * 1.4,
+      big ? 0.09 + Math.random() * 0.06 : 0.12 + Math.random() * 0.13);
+    p.big = big;
+    p.my = ay / H3;
+    inners.push(p);
+  }
+
+  /* --- 轮廓粒子：沿每层斜边 + 裙边密排（描出层叠剪影） --- */
+  edges = [];
+  const nEd = Math.round(SCALE.edge * CONFIG.density * areaK);
+  for (let i = 0; i < nEd; i++) {
+    const L = layers[Math.floor(Math.random() * SEG)];
+    const vv = 0.80 + Math.random() * 0.32;          // 聚焦层底边缘 + 裙边 → 锯齿剪影
+    const u = L.uTop + (L.uBot - L.uTop) * vv;
+    const ang = Math.random() * Math.PI * 2;
+    const r = surfR(L, vv) * (1.0 + Math.random() * 0.05);
+    const p = makeTreeP(Math.cos(ang) * r, ayOf(u), Math.sin(ang) * r,
+      0.9 + Math.random() * 1.3, 0.45 + Math.random() * 0.35);
+    p.my = ayOf(u) / H3;
+    edges.push(p);
+  }
+
+  /* --- 树干粒子：地面向上的细圆柱 --- */
+  trunks = [];
+  const nTk = Math.round(SCALE.trunk * CONFIG.density * areaK);
+  const trunkR = Math.max(2.5, treeH * 0.012);
+  for (let i = 0; i < nTk; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = trunkR * (0.4 + Math.random() * 0.8);
+    trunks.push(makeTreeP(
+      Math.cos(ang) * r, TRUNK_TOP * H3 * Math.random(),
+      Math.sin(ang) * r,
+      0.9 + Math.random() * 1.4, 0.20 + Math.random() * 0.2));
+  }
+
+  /* --- 螺旋灯珠：逐层贴塔式表面绕行（3D 彩灯链） --- */
+  const TURNS = 5.2, NBEADS = 34;
+  const beads = [];
+  for (let k = 0; k < NBEADS; k++) {
+    const fi = k / NBEADS * SEG;
+    const ti = Math.min(SEG - 1, Math.floor(fi));
+    const L = layers[ti];
+    const v = fi - ti;                               // 层内 0..1
+    const u = L.uTop + (L.uBot - L.uTop) * v;
+    const phi = k / NBEADS * TURNS * Math.PI * 2 + 0.7;
+    const r = surfR(L, v) * 1.06;
+    beads.push({ u, ax: Math.cos(phi) * r, ay: ayOf(u), az: Math.sin(phi) * r, r: 2.2 + 2 * u });
+  }
+
+  /* --- 底座粒子环：内环密排 / 中环虚线 / 外环长短刻度 --- */
+  const basePts = [];
+  const mkRing = (rf, n, opts) => {
+    for (let i = 0; i < n; i++) {
+      if (opts.gap && i % 5 === 4) continue;          // 虚线感：周期性留空
+      const a = i / n * Math.PI * 2;
+      const long = opts.tick && i % 4 === 0;          // 长刻度
+      basePts.push({
+        ax: Math.cos(a) * rf * (0.985 + Math.random() * 0.03),
+        az: Math.sin(a) * rf * (0.985 + Math.random() * 0.03),
+        ay: (Math.random() - 0.5) * 3,
+        s: (long ? 1.7 : 1.0) * (0.85 + Math.random() * 0.3),
+        a: (long ? 0.50 : 0.30) * (0.85 + Math.random() * 0.3),
+        ph: Math.random() * Math.PI * 2,
+        fs: 0.6 + Math.random() * 1.2,
+      });
+    }
+  };
+  mkRing(maxW * 1.05, 170, {});                  // 内环：略超树裙 → 不被树根吞没
+  mkRing(maxW * 1.28, 220, { gap: true });
+  mkRing(maxW * 1.55, 300, { tick: true });
+
+  tree = { cx, topY, baseY, maxW, treeH, H3, layers, beads, basePts,
+           trunkY0: TRUNK_TOP * H3, pedY: gY };
+}
+
+/* ================= 远景星野 ================= */
+let farStars = [];
+function buildFarStars() {
+  farStars = [];
+  const n = Math.round(W * H / 9000);           // 稀疏克制
+  for (let i = 0; i < n; i++) {
+    farStars.push({
+      x: Math.random() * W, y: Math.random() * H,
+      s: 0.6 + Math.random() * 1.6,
+      a: 0.08 + Math.random() * 0.30,
+      fs: 0.4 + Math.random() * 1.8,
+      ph: Math.random() * Math.PI * 2,
+    });
+  }
+}
+
+/* ================= 光尘 / 飘雪 ================= */
+function buildParticles() {
+  motes = []; snows = [];
+  const areaK = Math.min(1, Math.max(0.55, Math.sqrt(W * H / (1280 * 800))));
+  const n = Math.round(SCALE.motes * CONFIG.density * areaK);
+  for (let i = 0; i < n; i++) motes.push(newMote());
+  const ns = Math.round(SCALE.snows * CONFIG.density * areaK);
+  for (let i = 0; i < ns; i++) snows.push(newSnow(true));
+}
+function newMote() {
+  return {
+    ang: Math.random() * Math.PI * 2,
+    rad: 0.75 + Math.random() * 0.65,
+    my: Math.random(),
+    rise: 0.02 + Math.random() * 0.04,
+    s: 1.2 + Math.random() * 2.4,
+    ph: Math.random() * Math.PI * 2,
+    fs: 0.5 + Math.random() * 1.2,
+    life: -Math.random() * 4,
+    lifeMax: 5 + Math.random() * 5,
+  };
+}
+function newSnow(first) {
+  return {
+    x: Math.random() * W,
+    y: first ? Math.random() * H : -8,
+    vy: 9 + Math.random() * 14,
+    sway: 8 + Math.random() * 14,
+    ph: Math.random() * Math.PI * 2,
+    fs: 0.4 + Math.random() * 0.8,
+    s: 1 + Math.random() * 2,
+  };
+}
+
+/* ================= 尺寸自适应 ================= */
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cvs.width = Math.round(W * DPR); cvs.height = Math.round(H * DPR);
+  cvs.style.width = W + 'px'; cvs.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  buildTree();
+  buildParticles();
+  buildFarStars();
+}
+window.addEventListener('resize', resize);
+
+/* ================= 手势：指尖点燃 + 双指缩放/旋转 + 滚轮缩放 ================= */
+const clampZ = z => Math.min(2.5, Math.max(0.5, z));
+// 屏幕 → 场景坐标（缩放围绕画面中心）
+const toScene = (x, y) => [W / 2 + (x - W / 2) / zoom, H / 2 + (y - H / 2) / zoom];
+function syncZoomUI() {
+  const s = document.getElementById('slZoom');
+  if (s) s.value = Math.round(targetZoom * 100) / 100;
+}
+
+cvs.addEventListener('pointerdown', e => {
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1) {
+    ign.push({ sx: e.clientX, sy: e.clientY, x: 0, y: 0, id: e.pointerId });
+    // 双击 / 双触：复位缩放
+    const now = performance.now();
+    if (now - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 48) {
+      targetZoom = 1; syncZoomUI();
+    }
+    lastTap = { t: now, x: e.clientX, y: e.clientY };
+  } else {
+    ign.length = 0;                                    // 第二指落下 → 进入捏合，停止点燃
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { d0: Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)), z0: targetZoom };
+    }
+  }
+});
+cvs.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x;
+  p.x = e.clientX; p.y = e.clientY;
+  if (pinch && pointers.size >= 2) {                  // 双指：张合缩放
+    const [a, b] = [...pointers.values()];
+    targetZoom = clampZ(pinch.z0 * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d0);
+    syncZoomUI();
+    return;
+  }
+  if (pointers.size === 1) {                          // 单指：横向拖动 → 转动视角（同时点燃）
+    ry += dx * 0.0045;
+    rVel = Math.max(-4, Math.min(4, dx * 0.0045 * 60));   // 松手后惯性滑行
+    const g = ign.find(v => v.id === e.pointerId);
+    if (g) { g.sx = e.clientX; g.sy = e.clientY; }
+  }
+});
+const endStroke = e => {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  const g = ign.find(v => v.id === e.pointerId);
+  if (g) {
+    ign.splice(ign.indexOf(g), 1);
+    // 松手 → 点燃扩散波从触点散开（波前经过的粒子依次点亮）
+    waves.push({ sx: g.sx, sy: g.sy, x: 0, y: 0, R: 0, max: 330 });
+  }
+};
+cvs.addEventListener('pointerup', endStroke);
+cvs.addEventListener('pointercancel', endStroke);
+cvs.addEventListener('pointerleave', endStroke);
+
+// 桌面：滚轮缩放
+cvs.addEventListener('wheel', e => {
+  e.preventDefault();
+  targetZoom = clampZ(targetZoom * Math.exp(-e.deltaY * 0.0012));
+  syncZoomUI();
+}, { passive: false });
+
+/* ================= 主循环 ================= */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.033);
+  last = now;
+  t += dt * CONFIG.speed;
+
+  // 开场汇聚后的"绽放"脉冲（仅一次）：全场粒子闪亮一瞬再落回
+  if (bloomT === 0 && t > 2.1) bloomT = t;
+  bloom = bloomT ? Math.exp(-(t - bloomT) * 1.5) : 0;
+
+  // 自转 + 手动旋转惯性（松手后缓缓停）
+  rVel *= Math.exp(-dt * 2.0);
+  ry += (CONFIG.rotate * 0.35 + rVel) * dt * CONFIG.speed;
+  cosR = Math.cos(ry); sinR = Math.sin(ry);
+
+  // 点燃点 / 扩散波：屏幕坐标 → 场景坐标；波前外扩
+  for (const g of ign) [g.x, g.y] = toScene(g.sx, g.sy);
+  for (const wv of waves) {
+    [wv.x, wv.y] = toScene(wv.sx, wv.sy);
+    wv.R += dt * 400;
+  }
+  waves = waves.filter(wv => wv.R < wv.max);
+  // 缩放平滑趋近
+  zoom += (targetZoom - zoom) * Math.min(1, dt * 10);
+
+  if (CONFIG.flow) flowU = (flowU + dt * 0.14 * CONFIG.speed) % 1;
+
+  render(dt);
+  requestAnimationFrame(frame);
+}
+
+/* ================= 渲染 ================= */
+function render(dt) {
+  const [tr, tg, tb] = hexToRgb(CONFIG.treeColor);
+  const colA = a => `rgba(${tr},${tg},${tb},${a})`;
+
+  /* 背景：深空底 + 极淡径向暗渐变 */
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  const bg = ctx.createRadialGradient(W / 2, H * 0.42, 0, W / 2, H * 0.42, Math.max(W, H) * 0.8);
+  bg.addColorStop(0, '#070b13');
+  bg.addColorStop(1, '#02040a');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  // 暗角聚焦：四角压暗，主体从背景中"跳"出来（电影感）
+  const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.42, W / 2, H / 2, Math.max(W, H) * 0.72);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.42)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+
+  const breathe = CONFIG.breathing
+    ? 0.84 + 0.16 * (0.5 - 0.5 * Math.cos(t * 1.15))
+    : 1;
+  const glowK = CONFIG.glow * breathe;
+
+  /* ---------- 远景星野（微弱闪烁，白色微光） ---------- */
+  ctx.globalCompositeOperation = 'lighter';
+  for (const s of farStars) {
+    ctx.globalAlpha = s.a * (0.32 + 0.30 * Math.sin(t * s.fs + s.ph));
+    const g = s.s * 1.6;
+    ctx.drawImage(whiteSprite, s.x - g, s.y - g, g * 2, g * 2);
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+
+  /* ---------- 场景缩放（围绕画面中心，树/光环/底座整体缩放） ---------- */
+  ctx.save();
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-W / 2, -H / 2);
+
+  /* ---------- 粒子树主体（海量粒子围成树形） ---------- */
+  ctx.globalCompositeOperation = 'lighter';
+  const flowBand = 1 - flowU;                      // 流光波：从树顶扫到树底
+
+  drawTreeParticles(inners, 1.0, dt, flowBand, glowK);
+  drawTreeParticles(edges, 2.2, dt, flowBand, glowK);   // 轮廓更亮 → 剪影清晰
+  drawTreeParticles(trunks, 1.1, dt, flowBand, glowK);
+
+  /* ---------- 螺旋灯珠 + 流光（3D 彩灯链随树旋转） ---------- */
+  const fogOf = zv => 0.62 + 0.38 * Math.min(1, Math.max(0, 0.5 + (zv - F) / (tree.maxW * 1.6) * 0.8));
+  for (let i = 0; i < tree.beads.length; i++) {
+    const b = tree.beads[i];
+    const bx = b.ax * cosR - b.az * sinR;
+    const bz = b.ax * sinR + b.az * cosR;
+    const yv = b.ay * cosT - bz * sinT;
+    const zv = b.ay * sinT + bz * cosT + F;
+    const sc = F / zv;
+    const px = cXs + bx * sc, py = gY - yv * sc;
+    const tw = 0.45 + 0.55 * (0.5 - 0.5 * Math.cos(t * 2.2 + i * 1.7));
+    const du = Math.abs(b.u - flowU);
+    const flowGlow = CONFIG.flow ? Math.exp(-Math.min(du, 1 - du) * 30) * 0.9 : 0;
+    const a = Math.min(1, (0.50 * tw + flowGlow) * glowK * fogOf(zv));
+    if (a < 0.02) continue;
+    const r = b.r * sc * (1 + flowGlow * 0.5);
+    ctx.globalAlpha = a;
+    ctx.drawImage(beadSprite, px - r * 2, py - r * 2, r * 4, r * 4);
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+
+  /* ---------- 树顶星：五角星 + 光芒（投影至 3D 树顶） ---------- */
+  {
+    const ayS = tree.H3 * 1.02;
+    const scS = F / (ayS * sinT + F);
+    const sx = cXs, sy = gY - ayS * cosT * scS;
+    const pulse = 0.75 + 0.25 * Math.cos(t * 1.15 + 1);
+    const R = 13, r2 = R * 0.42;
+    ctx.globalCompositeOperation = 'lighter';
+    // 粒子晕
+    const gs = 22 + 7 * pulse;
+    ctx.globalAlpha = Math.min(1, 0.9 * glowK * (1 + bloom));
+    ctx.drawImage(beadSprite, sx - gs, sy - gs, gs * 2, gs * 2);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(Math.sin(t * 0.5) * 0.06);
+    ctx.strokeStyle = colA(Math.min(1, (0.95 * pulse) * glowK * (1 + bloom)));
+    ctx.shadowColor = colA(0.95);
+    ctx.shadowBlur = 10 * CONFIG.glow * pulse;
+    ctx.lineWidth = Math.max(1, Math.min(W, H) / 420);
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const ang = -Math.PI / 2 + i * Math.PI / 5;
+      const rr = i % 2 === 0 ? R : r2;
+      const x = Math.cos(ang) * rr, y = Math.sin(ang) * rr;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.stroke();
+    ctx.restore();
+    // 光芒
+    ctx.globalCompositeOperation = 'lighter';
+    const ray = 40 + 12 * pulse;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 4; i++) {
+      const ang = i * Math.PI / 2 + 0.4;
+      const g = ctx.createLinearGradient(
+        sx - Math.cos(ang) * ray, sy - Math.sin(ang) * ray,
+        sx + Math.cos(ang) * ray, sy + Math.sin(ang) * ray);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, colA(0.35 * glowK));
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.strokeStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(sx - Math.cos(ang) * ray, sy - Math.sin(ang) * ray);
+      ctx.lineTo(sx + Math.cos(ang) * ray, sy + Math.sin(ang) * ray);
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+  }
+
+  /* ---------- 环绕能量光环（水平圆环，真实俯角透视） ---------- */
+  {
+    ctx.globalCompositeOperation = 'lighter';
+    const halos = [
+      { u: 0.30, rot:  0.55 },
+      { u: 0.55, rot: -0.40 },
+      { u: 0.78, rot:  0.30 },
+    ];
+    for (const rg of halos) {
+      const ay = (0.16 + 0.84 * rg.u) * tree.H3;                    // 环的世界高度
+      const rr = tree.maxW * ((1.02 - 0.90 * rg.u) * 1.45 + 0.08);  // 环半径（略超该高度树面）
+      const sc = F / (ay * sinT + F);
+      const cy = gY - ay * cosT * sc;
+      const rx = rr * sc;
+      const ryE = rx * sinT * 0.95;
+      // 幽灵全环：虚线纹理随时间流动
+      ctx.strokeStyle = colA(0.19 * glowK);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 7]);
+      ctx.lineDashOffset = t * 26 * Math.sign(rg.rot);
+      ctx.beginPath(); ctx.ellipse(cXs, cy, rx, ryE, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      // 亮彗弧：沿环巡游的发光短弧
+      const a0 = t * rg.rot * 2;
+      ctx.strokeStyle = colA(Math.min(0.85, 0.62 * glowK));
+      ctx.shadowColor = colA(0.9);
+      ctx.shadowBlur = 8 * CONFIG.glow;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.ellipse(cXs, cy, rx, ryE, 0, a0, a0 + 0.85); ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* ---------- 粒子底座：三层环绕粒子环 + 地面辉光（真实地面透视） ---------- */
+  {
+    const cx = cXs, py = gY;
+    const gy = sinT * 0.85;
+    ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createRadialGradient(cx, py + 6, 0, cx, py + 6, tree.maxW * 1.9);
+    g.addColorStop(0, colA(0.26 * glowK));
+    g.addColorStop(0.5, colA(0.09 * glowK));
+    g.addColorStop(1, colA(0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(cx, py + 6, tree.maxW * 1.9, tree.maxW * 1.9 * gy * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+
+    // 环绕粒子环（随视角旋转、闪烁、深度雾感、绽放增亮）
+    for (const q of tree.basePts) {
+      const wx = q.ax * cosR - q.az * sinR;
+      const wz = q.ax * sinR + q.az * cosR;
+      const yv = q.ay * cosT - wz * sinT;
+      const zv = q.ay * sinT + wz * cosT + F;
+      const sc = F / zv;
+      const px = cx + wx * sc, pyy = gY - yv * sc;
+      const fog = 0.62 + 0.38 * Math.min(1, Math.max(0, 0.5 + (zv - F) / (tree.maxW * 1.6) * 0.8));
+      const tw = 0.70 + 0.30 * Math.sin(t * q.fs + q.ph);
+      ctx.globalAlpha = Math.min(1, q.a * tw * glowK * fog * (1 + bloom * 0.6));
+      const s = q.s * sc * (1 + bloom * 0.3);
+      ctx.drawImage(treeSprite, px - s, pyy - s, s * 2, s * 2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* ---------- 魔法光尘（3D 环绕巡游 + 上升） ---------- */
+  if (CONFIG.particles && beadSprite) {
+    ctx.globalCompositeOperation = 'lighter';
+    for (const m of motes) {
+      m.life += dt * CONFIG.speed;
+      if (m.life > m.lifeMax) Object.assign(m, newMote()), m.life = 0;
+      if (m.life < 0) continue;
+      const a = Math.sin(Math.PI * m.life / m.lifeMax);
+      const tw = 0.6 + 0.4 * Math.sin(t * m.fs + m.ph);
+      m.ang += dt * 0.25 * CONFIG.speed;
+      m.rad += Math.sin(t * m.fs + m.ph) * 0.0016;
+      m.my -= m.rise * dt * CONFIG.speed;
+      if (m.my < 0) m.my = 1;
+      const rr = m.rad * tree.maxW * 1.25;
+      const ax = Math.cos(m.ang) * rr, az = Math.sin(m.ang) * rr;
+      const ay = (0.06 + 0.94 * m.my) * tree.H3;
+      const mx = ax * cosR - az * sinR;
+      const mz = ax * sinR + az * cosR;
+      const yv = ay * cosT - mz * sinT;
+      const zv = ay * sinT + mz * cosT + F;
+      const sc = F / zv;
+      const px = cXs + mx * sc, py2 = gY - yv * sc;
+      ctx.globalAlpha = a * tw * 0.5 * CONFIG.glow * fogOf(zv);
+      const ms = m.s * sc;
+      ctx.drawImage(beadSprite, px - ms * 2, py2 - ms * 2, ms * 4, ms * 4);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* ---------- 结束场景缩放 ---------- */
+  ctx.restore();
+
+  /* ---------- 缓落光雪（屏幕空间氛围层，不随缩放） ---------- */
+  if (CONFIG.particles && beadSprite) {
+    ctx.globalCompositeOperation = 'lighter';
+    for (const s of snows) {
+      s.y += s.vy * dt * CONFIG.speed;
+      if (s.y > H + 8) Object.assign(s, newSnow(false));
+      const x = s.x + Math.sin(t * s.fs + s.ph) * s.sway;
+      ctx.globalAlpha = 0.28 * CONFIG.glow;
+      ctx.drawImage(beadSprite, x - s.s * 2, s.y - s.s * 2, s.s * 4, s.s * 4);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+}
+
+/* 树粒子批量绘制：3D 投影 / 汇聚 / 深度雾感 / 流光波 / 指尖点燃余晖 */
+function drawTreeParticles(arr, bright, dt, flowBand, glowK) {
+  const lerp = Math.min(dt * 60, 2);
+  for (const p of arr) {
+    // 余晖冷却（手指离开后缓缓熄灭，稍放缓 → 拖尾更连贯）
+    if (p.heat > 0) {
+      p.heat *= Math.exp(-dt * 1.1);
+      if (p.heat < 0.003) p.heat = 0;
+    }
+    // 世界坐标微漂移 → 绕轴旋转 → 俯角透视投影
+    const ax = p.ax + Math.sin(t * p.fs + p.ph) * p.amp;
+    const ay = p.ay + Math.sin(t * p.fs * 0.9 + p.ph2) * p.amp;
+    const wx = ax * cosR - p.az * sinR;
+    const wz = ax * sinR + p.az * cosR;
+    const yv = ay * cosT - wz * sinT;
+    const zv = ay * sinT + wz * cosT + F;
+    const sc = F / zv;
+    const tx = cXs + wx * sc;
+    const ty = gY - yv * sc;
+    // 汇聚 / 跟随（开场全屏飞聚约 2 秒成型，旋转时柔顺跟随投影点）
+    p.x += (tx - p.x) * Math.min(1, p.k * lerp * 0.015);
+    p.y += (ty - p.y) * Math.min(1, p.k * lerp * 0.015);
+
+    // 指尖点燃：45px 内，热度渐进趋近（~0.15s 缓亮，余弦衰减 → 丝滑不生硬）
+    for (const g of ign) {
+      const dx = p.x - g.x, dy = p.y - g.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < 2025) {
+        const tgt = Math.cos(Math.sqrt(d2) * 0.0349);            // (d/45)·(π/2)
+        if (tgt > p.heat) p.heat += (tgt - p.heat) * Math.min(1, dt * 9);
+      }
+    }
+    // 点燃扩散波：波前经过处渐进点亮（轻点 → 涟漪散开）
+    for (const wv of waves) {
+      const dx = p.x - wv.x, dy = p.y - wv.y;
+      const band = Math.abs(Math.sqrt(dx * dx + dy * dy) - wv.R);
+      if (band < 30) {
+        const tgt = Math.cos(band * 0.0524) * (1 - wv.R / wv.max);   // (band/30)·(π/2)
+        if (tgt > p.heat) p.heat += (tgt - p.heat) * Math.min(1, dt * 12);
+      }
+    }
+
+    // 深度雾感：远处更小更暗、近处更大更亮 → 旋转立体感
+    const fog = 0.62 + 0.38 * Math.min(1, Math.max(0, 0.5 + (zv - F) / (tree.maxW * 1.6) * 0.8));
+    // 流光波：亮带沿树高扫过
+    const dw = Math.abs(p.my - flowBand);
+    const flowGlow = CONFIG.flow ? 0.5 / (1 + dw * dw * 90) : 0;
+
+    // 热度 → 亮度 / 尺寸增益；高热粒子换白芯亮贴图（点燃感）
+    const hot = p.heat;
+    const tw = 0.72 + 0.28 * Math.sin(t * 1.8 + p.ph * 4);
+    const a = Math.min(1, p.a * bright * fog * (1 + (flowGlow + hot * 1.3) * 1.8) * glowK * tw * (1 + bloom * 0.8));
+    if (a < 0.015) continue;
+    ctx.globalAlpha = a;
+    const s = p.s * sc * (0.8 + 0.4 * fog) * (1 + (flowGlow + hot) * 0.6) * (1 + bloom * 0.35);
+    ctx.drawImage(hot > 0.35 ? beadSprite : treeSprite, p.x - s, p.y - s, s * 2, s * 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ================= 面板交互 ================= */
+const $ = id => document.getElementById(id);
+
+function syncAccent() {
+  document.getElementById('panel').style.setProperty('--accent', CONFIG.treeColor);
+}
+function rebuildSprites() {
+  treeSprite = makeTreeSprite(CONFIG.treeColor);
+  beadSprite = makeBeadSprite(CONFIG.starColor);
+  whiteSprite = makeBeadSprite('#cfe0ee');
+}
+
+// 预设色板
+const presetRow = $('presetRow');
+PRESETS.forEach(([name, treeC, starC]) => {
+  const b = document.createElement('button');
+  b.className = 'swatch';
+  b.title = name;
+  b.setAttribute('aria-label', name);
+  b.style.background = `linear-gradient(135deg, ${treeC} 50%, ${starC} 50%)`;
+  b.addEventListener('click', () => {
+    CONFIG.treeColor = treeC; CONFIG.starColor = starC;
+    $('treePicker').value = treeC; $('starPicker').value = starC;
+    rebuildSprites();
+    document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+    b.classList.add('active');
+    syncAccent();
+  });
+  presetRow.appendChild(b);
+});
+
+// 拾色器
+rebuildSprites();
+$('treePicker').addEventListener('input', e => {
+  CONFIG.treeColor = e.target.value;
+  rebuildSprites();
+  document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+  syncAccent();
+});
+$('starPicker').addEventListener('input', e => {
+  CONFIG.starColor = e.target.value;
+  rebuildSprites();
+  document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+});
+
+// 开关
+$('tgBreath').addEventListener('change', e => CONFIG.breathing = e.target.checked);
+$('tgFlow').addEventListener('change', e => CONFIG.flow = e.target.checked);
+$('tgParticle').addEventListener('change', e => CONFIG.particles = e.target.checked);
+
+// 滑块（密度变化防抖重建粒子）
+let densityTimer = 0;
+$('slGlow').addEventListener('input', e => CONFIG.glow = +e.target.value);
+$('slSpeed').addEventListener('input', e => CONFIG.speed = +e.target.value);
+$('slDensity').addEventListener('input', e => {
+  CONFIG.density = +e.target.value;
+  clearTimeout(densityTimer);
+  densityTimer = setTimeout(() => { buildTree(); buildParticles(); }, 140);
+});
+$('slZoom').addEventListener('input', e => targetZoom = clampZ(+e.target.value));
+$('slRotate').addEventListener('input', e => CONFIG.rotate = +e.target.value);
+
+// 手机端：面板收起/展开（pointerdown 即时响应，避免触摸延迟/被吞）
+$('panelBtn').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const folded = $('panel').classList.toggle('collapsed');
+  $('panelBtn').textContent = folded ? '▴' : '▾';
+});
+
+/* ================= 启动 ================= */
+syncAccent();
+resize();
+document.querySelectorAll('.swatch')[0]?.classList.add('active');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
